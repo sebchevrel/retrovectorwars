@@ -1,0 +1,745 @@
+<html><head>
+<title>Retro Vector War - a webgl experiment by Sebastien Chevrel</title>
+
+<style type="text/css">
+	body {margin:0;padding:0;z-index:1; background:#000; color:#00ff00; font-family:"Lucida Console", Monaco, monospace;
+		
+	}
+	#msg { position:absolute; left:10px; top:10px;}
+
+	#instructions {
+		width:100%;
+		height:100%;
+		position:absolute;
+		top:0px;
+		left:0px;
+		
+		display:table;
+	}
+
+	#instructions-text {
+		display:table-cell;
+		text-align:center;
+		vertical-align: middle;
+		width:100%;
+		height:100%;
+	}
+
+	#instructions-band {		
+		border-top: 4px solid #fff;
+		border-bottom: 4px solid #fff;
+		background-color: rgba(0,0,0,0.5);
+	}
+
+	#instructions-text h1 {
+		font-size:46px;
+		color:#fff;
+		padding:10px;
+		margin:0px;
+	}
+
+	#instructions-text h2 {
+		color:#0ff;
+		font-size:14px;
+		padding:0px;
+		margin:0px;	
+	}
+
+	a { color:#0ff; }
+	a:visited { color:#0ff; }
+	a:active {color:#f0f;}
+
+	#instructions-text h3 {
+		color:#f0f;
+		font-size:18px;
+		padding:20px;
+		margin:0px;
+
+	}
+
+
+
+	#glcanvas { position:absolute; left:0px; top:0px; width:100%; height:100%;}
+</style>
+
+<script type="text/javascript" src="libs/three.js"></script>
+
+<script type="text/javascript" src="libs/improvedNoise.js"></script>
+
+
+<script src="libs/three.extras/shaders/ConvolutionShader.js"></script>
+<script src="libs/three.extras/shaders/CopyShader.js"></script>
+<script src="libs/three.extras/shaders/FXAAShader.js"></script>
+
+<script src="libs/three.extras/postprocessing/EffectComposer.js"></script>
+<script src="libs/three.extras/postprocessing/MaskPass.js"></script>
+<script src="libs/three.extras/postprocessing/RenderPass.js"></script>
+<script src="libs/three.extras/postprocessing/ShaderPass.js"></script>
+<script src="libs/three.extras/postprocessing/BloomPass.js"></script>
+
+
+<script type="text/javascript" src="retrovectorwars/Utils.js"></script>
+<script type="text/javascript" src="retrovectorwars/Simulation.js"></script>
+<script type="text/javascript" src="retrovectorwars/CameraController.js"></script>
+<script type="text/javascript" src="retrovectorwars/Terrain.js"></script>
+<script type="text/javascript" src="retrovectorwars/Particles.js"></script>
+<script type="text/javascript" src="retrovectorwars/Projectiles.js"></script>
+<script type="text/javascript" src="retrovectorwars/Ship.js"></script>
+
+
+<script type="text/javascript">
+'use strict';
+/*
+
+	RETRO VECTOR WAR	
+
+*/
+var RetroVectorWar=function()
+{	
+	// Custom Classes
+	var player;
+	var simulation;
+	var terrain;
+	var projectiles;
+	var particles;
+	var cameraControl;
+
+	// Three.js objects
+	var sceneTerrain;	
+	var sceneBloom;
+	var camera;
+	var renderer;
+	var composer;
+	var clock;
+	var ambientLight;
+	var directionalLight;
+	var pointLight;
+	var textures;
+	var materials;
+	var models;
+	var fxBuffer;
+	var fxQuad;
+	var fxMaterial;
+	var fxScene;
+	var fxCamera;
+	
+
+	// Game State
+	var modelsToLoad=0;
+	var isPaused=false;
+	var isInputFlying=false;
+	var fireID=null;
+	var sequenceID=null;
+	var score=0;
+	var demoIndex=1;
+	var crashes=0;
+	var kills=0;
+
+
+	// DOM Elements
+	var debug;
+	var glcanvas;
+	var instructions;
+	
+		
+	// HOOK to start app	
+	window.addEventListener("load",init,false);
+	
+	function init() 
+	{
+		loadAssets();
+
+		document.addEventListener("resize",onResize,false);
+		document.addEventListener("keydown",onKeyDown,false);
+		document.addEventListener("mousemove",onMouseMove,false);
+		document.addEventListener("mousewheel",onMouseWheel,false);
+		document.addEventListener("mousedown",onMouseDown,false);
+		document.addEventListener("mouseup",onMouseUp,false);
+
+		document.addEventListener('fullscreenchange', onFullScreenChange, false);
+		document.addEventListener('mozfullscreenchange', onFullScreenChange, false);
+		document.addEventListener('webkitfullscreenchange', onFullScreenChange, false);
+		
+		document.addEventListener('pointerlockchange', onPointerLockChange, false);
+		document.addEventListener('mozpointerlockchange', onPointerLockChange, false);
+		document.addEventListener('webkitpointerlockchange', onPointerLockChange, false);
+		
+		document.addEventListener('pointerlockerror', onPointerLockError, false);
+		document.addEventListener('mozpointerlockerror', onPointerLockError, false);
+		document.addEventListener('webkitpointerlockerror', onPointerLockError, false);
+
+		debug=document.getElementById('msg');
+		debug.innerHTML='WebGL initialized';
+
+		instructions=document.getElementById('instructions');
+		instructions.addEventListener('click',onInstructionsClick);
+
+		
+	}
+
+	function loadAssets()
+	{
+
+		textures={
+			gridWhiteBorder: THREE.ImageUtils.loadTexture("image/grid_white_border.png"),
+			gridBlackBorder: THREE.ImageUtils.loadTexture("image/grid_black_border.png"),
+			terrain: THREE.ImageUtils.loadTexture("image/grid_terrain.png"),
+		};
+
+		modelsToLoad=0;
+		models={
+			ship: new THREE.JSONLoader().load('model/ship.js',function(e) { modelsToLoad++; modelLoaded(e,'ship'); }),
+		};
+	}
+
+	function modelLoaded(e,name) { 
+		models[name]=e;
+		if (--modelsToLoad==0) init3D(); 
+	}
+
+
+	function init3D() 
+	{
+		sceneTerrain = new THREE.Scene();
+		sceneBloom 	= new THREE.Scene();
+
+		camera= new THREE.PerspectiveCamera( 70, window.innerWidth / window.innerHeight, 1, 50000 );
+
+		glcanvas= document.getElementById('glcanvas');
+
+		renderer = new THREE.WebGLRenderer({domElement:glcanvas,precision:'highp',antialias: false, alpha:false });
+
+		fxBuffer= new THREE.WebGLRenderTarget(window.innerWidth,window.innerHeight,
+			{ minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBFormat, stencilBuffer: false });
+
+		fxCamera = new THREE.OrthographicCamera( -1, 1, 1, -1, 0, 1 );
+		fxScene  = new THREE.Scene();
+		fxQuad = new THREE.Mesh( new THREE.PlaneGeometry( 2, 2 ), null );
+		fxScene.add( fxQuad );
+
+		renderer.setSize( window.innerWidth, window.innerHeight );
+
+		document.body.appendChild( renderer.domElement );
+
+		clock = new THREE.Clock();
+
+		sceneTerrain.fog = new THREE.Fog( 0x000000, 40000,50000 )
+		
+		ambientLight = new THREE.AmbientLight( 0x303030 ); // soft white light
+		sceneTerrain.add( ambientLight );
+
+		directionalLight = new THREE.DirectionalLight( 0xffffff, 0.6 );
+		directionalLight.position.set( 1, 2, 1 );		
+		sceneTerrain.add( directionalLight );
+		//sceneBloom.add( directionalLight );
+		
+		materials={
+			terrain: new THREE.MeshPhongMaterial({
+				map: textures.gridWhiteBorder,
+				color:0xffffff,
+				specular:0xffffff,				
+				//emissive: 0xffffff,
+				shininess:1,
+				//lightMap: textures.gridWhiteBorder,
+				//wireframe:false,
+				//polygonOffset:true,polygonOffsetFactor:2,polygonOffsetUnit:2,
+				side:THREE.BackSide,
+				shading:THREE.FlatShading,
+			}),
+			shipCyan: new THREE.MeshPhongMaterial({color:0x00ffff,emissive:0x004040,specular:0xffffff,shininess:10,shading:THREE.FlatShading}),
+			shipMagenta: new THREE.MeshPhongMaterial({color:0xff00ff,emissive:0x400040,specular:0xffffff,shininess:10,shading:THREE.FlatShading})
+		};
+
+		terrain=new Terrain({
+			material: materials.terrain,
+			scene:sceneTerrain
+		});
+
+		projectiles=new Projectiles({
+			scene: sceneBloom,
+			terrain: terrain,
+			onCollision: onProjectileCollision
+		});
+
+		player=new Ship({
+			position: new THREE.Vector3(0,10000,0),
+			speed: 3000,
+			scene:sceneTerrain,
+			projectiles: projectiles,
+			name: 'player',
+			clan:0,
+			geometry: models.ship,
+			material: materials.shipCyan
+			
+		});
+
+		simulation=new Simulation({
+			terrain: terrain,
+			player: player,
+			projectiles: projectiles,
+			onCollision: onShipCollision
+
+		})
+
+		simulation.addChild(player);
+		projectiles.addTarget(player);
+
+		for(var i=1; i<=10; i++) 
+		{
+			var clan=i % 2;
+			var ship=new Ship({
+				position: new THREE.Vector3(0,0,0),
+				speed:3000,
+				scene:sceneTerrain,
+				projectiles: projectiles,
+				name:'ennemy '+i,
+				headingFactor: 25,
+				velocityFactor: 0.0015,
+				clan: clan,
+				geometry: models.ship,
+				material: clan ? materials.shipMagenta : materials.shipCyan				
+			})
+			simulation.addChild(ship);
+			projectiles.addTarget(ship);
+		}
+
+		particles=new Particles({
+			scene:sceneBloom		
+		});
+
+		cameraControl=new CameraController({
+			camera: camera,
+			mode: CameraController.FIRST_PERSON,
+			subject: player,
+			target: player,
+			simulation: simulation
+		});
+
+		/*
+		var effectBloom = new THREE.BloomPass( 2 );
+		var clearMask = new THREE.ClearMaskPass();
+		var renderMask = new THREE.MaskPass( sceneBloom, camera );
+		var renderMaskInverse = new THREE.MaskPass( sceneBloom, camera );
+		renderMaskInverse.inverse = true;
+		var renderBackground = new THREE.RenderPass( sceneTerrain, camera );
+		var renderModel = new THREE.RenderPass( sceneBloom, camera );
+		renderModel.clear = false;
+		
+		composer = new THREE.EffectComposer( renderer );
+
+		composer.addPass( renderBackground );
+		composer.addPass( renderModel );
+		//composer.addPass( renderMaskInverse );
+		composer.addPass( effectBloom );
+		composer.addPass( clearMask );
+		*/
+
+		
+		
+		StartDemo();
+		render();
+	}
+
+	function render() 
+	{	
+		if (! isPaused) requestAnimationFrame(render);
+		else return; 
+
+		var delta = clock.getDelta();
+
+		simulation.update(delta);
+		
+		cameraControl.update(delta);		
+
+		terrain.update(camera);
+		
+		projectiles.update(delta);
+
+		particles.update(delta);
+
+		debug.innerHTML='SCORE: '+score + ' CRASHES: '+crashes+' KILLS: '+kills;
+
+		/*
+		debug.innerHTML='HEADING: '+Math.floor(player.heading*180/Math.PI)+' ALT: '+Math.floor(player.position.y)+' *** VERTICES: '+renderer.info.render.vertices+' FACES: '+renderer.info.render.faces+' GEOMETRIES: '+renderer.info.memory.geometries+' PROGRAMS: '+renderer.info.memory.programs+' TEXTURES: '+renderer.info.memory.textures; 
+		*/
+		
+		renderer.clear();
+		renderer.autoClear=false;
+		renderer.render(sceneTerrain, camera);
+		// to do bloom here
+		renderer.render(sceneBloom,camera);
+		
+	}	
+
+	/* ------------------------------------------------------------------------------
+
+		GAME COMMANDS	
+
+	*/
+
+	function StartDemo() {
+		console.log('start demo');
+		instructions.style.display='table';
+		simulation.resetDemo();
+		unlockPointer();
+		NextDemoScene();
+	}
+
+	function NextDemoScene() 
+	{
+		// cycle through targets
+		var target=simulation.getRandomActiveShip();
+		// swap cameras
+		switch(demoIndex=(demoIndex+1) % 3) {
+			case 0:	cameraControl.cutTo({mode:CameraController.CHASE_CAM,target:target}); break;
+			case 1:	cameraControl.cutTo({mode:CameraController.GOD_CAM,target:player});	break;
+			case 2:	cameraControl.cutTo({mode:CameraController.FIRST_PERSON,subject:target}); break;
+		}
+		// call again in a while
+		if (sequenceID) clearTimeout(sequenceID)
+		sequenceID=setTimeout(NextDemoScene,10000)	
+	}
+
+	function StartGame() 
+	{
+		// clear sequenced events
+		if (sequenceID) clearTimeout(sequenceID)
+		// hide instructions
+		instructions.style.display='none';
+		// lock pointer
+		lockPointer();
+		// enable input
+		isInputFlying=true;	
+		// reset the ships
+		simulation.resetGame()
+		// reset game state
+		score=0;
+		kills=0;
+		crashes=0;
+		// reset camera
+		cameraControl.cutTo({mode:CameraController.FIRST_PERSON, subject:player});	
+	}
+
+	function GameOver() 
+	{
+		console.log('game over');
+		isInputFlying=false;
+		cameraControl.cutTo({mode:CameraController.CHASE_CAM, target:player, chaseDistance:5000});
+		if (sequenceID) clearTimeout(sequenceID)
+		sequenceID=setTimeout(StartDemo,5000)	
+	}
+
+	function Pause() {
+		isPaused=true;
+		clock.stop();
+	}
+
+	function Resume() {
+		isPaused=false;
+		clock.start();
+		render();
+
+	}
+
+
+	/* ------------------------------------------------------------------------------
+
+		GAME EVENTS
+	
+	*/
+
+	function onInstructionsClick(e) {
+		StartGame();
+	}
+
+	function onShipCollision(ship,collision) 
+	{
+		if (ship.isDead) return;
+
+		var ship2=null;
+		var color;
+
+		if (collision.object.name.indexOf('tile')==-1) {
+			ship2=collision.object.ship;
+			crashes++;
+			ship2.kill();
+			if (ship2.clan==0) color={r:0,g:1,b:1,a:1}
+			else color={r:1,g:0,b:1,a:1};
+			if(ship2!=player) {
+				particles.createExplosion(collision.point,color);
+			} else if (! player.isDead )
+			{
+				particles.createExplosion(collision.point,color);
+				GameOver();	
+			}
+			else return;
+
+		} 
+		crashes++;
+		ship.kill();
+		if (ship.clan==0) color={r:0,g:1,b:1,a:1}
+		else color={r:1,g:0,b:1,a:1};
+
+		if (ship==player) {
+			particles.createExplosion(collision.point,color);
+			GameOver();
+		} else {
+			particles.createExplosion(collision.point,color);
+		}
+		
+	}
+
+	function onProjectileCollision(projectile,collision) 
+	{
+		var color;
+
+		if(collision.object.name.indexOf('tile')==0)
+		{
+			particles.createImpact(collision.point);
+		}
+		else if (collision.object.name==='player')
+		{
+			if (player.isDead) return;
+
+			if (player.clan==0) color={r:0,g:1,b:1,a:1}
+			else color={r:1,g:0,b:1,a:1};
+
+			if (player.hitPoints>0) {
+				particles.createHit(collision.point,color);
+				player.isHit=true;
+			}
+			if (--player.hitPoints == 0) {
+				player.kill();
+				particles.createExplosion(collision.point,color);
+				GameOver();
+				kills++;
+				projectile.owner.kills++;
+			}
+		}
+		else if (collision.object.name.indexOf('ennemy')==0)
+		{
+			var ennemy=collision.object.ship;
+
+			if(ennemy.isDead) return;
+			
+			if (ennemy.clan==0) color={r:0,g:1,b:1,a:1}
+			else color={r:1,g:0,b:1,a:1};
+
+			if (ennemy.hitPoints>0) {
+				particles.createHit(collision.point,color);
+				ennemy.isHit=true;
+			}
+			if(--ennemy.hitPoints == 0) {
+				ennemy.kill();
+				kills++;
+				projectile.owner.kills++;
+				particles.createExplosion(collision.point,color);
+				if (projectile.owner==player) score+=ennemy.score;
+				else projectile.owner.pickTarget();
+			}
+		}
+	}
+
+	
+
+	/* ------------------------------------------------------------------------------
+
+		SYSTEM EVENT LISTENERS
+
+	*/
+
+	function requestFullScreen( element ) {
+	  if ( element.requestFullscreen ) {
+	  	element.requestFullscreen();
+	  } else if ( element.mozRequestFullScreen ) {
+	  	element.mozRequestFullScreen();
+	  } else if ( element.webkitRequestFullScreen ) {
+	  	element.webkitRequestFullScreen( Element.ALLOW_KEYBOARD_INPUT );
+	  }
+	}
+
+	function onFullScreenChange() {
+	  if (document.webkitFullscreenElement === plockElement ||
+	      document.mozFullscreenElement === plockElement ||
+	      document.mozFullScreenElement === plockElement) { // Older API upper case 'S'.
+	    // Element is fullscreen, now we can request pointer lock
+	    plockElement.requestPointerLock = plockElement.requestPointerLock    ||
+	                              plockElement.mozRequestPointerLock ||
+	                              plockElement.webkitRequestPointerLock;
+	    plockElement.requestPointerLock();
+	    
+	  }
+	}
+
+
+	function onPointerLockChange() {
+	  if (document.mozPointerLockElement === document.body ||
+	      document.webkitPointerLockElement === document.body) {
+	    console.log("Pointer Lock was successful.");
+	  } else {
+	    console.log("Pointer Lock was lost.");
+	  }
+	}
+
+
+	function onPointerLockError(e) {
+	  console.log("Error while locking pointer.",e);
+	  //lockPointer(document.body);
+	}
+
+
+
+
+	function lockPointer(element) 
+	{
+		 document.body.requestPointerLock = document.body.requestPointerLock || document.body.mozRequestPointerLock || document.body.webkitRequestPointerLock;
+		
+		document.body.requestPointerLock();
+	}
+
+	function unlockPointer() 
+	{
+		document.exitPointerLock = document.exitPointerLock    ||
+                           document.mozExitPointerLock ||
+                           document.webkitExitPointerLock;
+
+       	document.exitPointerLock();
+	}
+
+
+	function onResize(e) 
+	{
+		camera.aspect = window.innerWidth / window.innerHeight;
+		camera.updateProjectionMatrix();
+		renderer.setSize( window.innerWidth, window.innerHeight );
+	}
+
+	function onMouseDown(e)
+	{
+		if (isInputFlying) {
+			projectiles.fire(player);
+			if (fireID) clearInterval(fireID);
+			fireID=setInterval(function() { projectiles.fire(player) },125);
+		}
+	}
+
+	function onMouseUp(e)
+	{
+		clearInterval(fireID);
+	}
+
+	function onMouseWheel(e) 
+	{
+		if (isInputFlying) {
+			player.speed=player.speed+e.wheelDeltaY;
+		}
+	}
+
+	function onMouseMove(e) 
+	{
+
+		/*
+		var hw=window.innerWidth/2;
+		var hh=window.innerHeight/2;
+		var cx=(e.clientX-hw)/hw;
+		var cy=(e.clientY-hh)/hh;
+
+		// PLAYER CONTROL
+		if (e.shiftKey && isInputFlying) {
+			player.targetPitch=-cy*Math.PI/2;
+			player.targetTurnSpeed=cx;
+			player.targetRoll=cx*Math.PI/4;
+			if(player.position.y>=player.CEILING) {
+				player.targetPitch=Math.min(0,player.targetPitch);
+			}		
+		}
+		*/
+
+		if (isInputFlying) {
+
+			var movementX = e.movementX || e.mozMovementX || e.webkitMovementX || 0,
+	      		movementY = e.movementY || e.mozMovementY || e.webkitMovementY || 0;
+
+	      	player.targetTurnSpeed=Math.min(1,Math.max(-1,player.targetTurnSpeed+movementX*0.0025));
+	      	player.targetRoll=player.targetTurnSpeed*Math.PI/2;
+	      	player.targetPitch=Math.min(Math.PI/2,Math.max(-Math.PI/2,player.targetPitch-movementY*0.002));
+				
+		}
+		
+
+		
+	}
+
+	function onKeyDown(e) 
+	{
+		console.log('KEY 0x'+parseInt(e.keyCode).toString(16));
+
+		switch (e.keyCode){
+			case 0x20: // SPACE
+				if(isPaused) Resume(); else Pause();
+				break;
+			case 0x21: // PG UP
+				if(isInputFlying) player.speed+=1000;
+				break;
+			case 0x22: // PG DOWN	
+				if(isInputFlying) player.speed-=1000;
+				break;
+			case 0x25: // LEFT
+				if(isInputFlying){
+					player.targetTurnSpeed=Math.max(-1,player.targetTurnSpeed-0.1)
+					player.targetRoll=player.targetTurnSpeed*Math.PI/4;		
+				}
+				break;
+			case 0x26: // UP
+				if(isInputFlying) player.targetPitch=Math.min(Math.PI/2,player.targetPitch+0.1)
+				break;
+			case 0x27: // RIGHT
+				if(isInputFlying) {
+					player.targetTurnSpeed=Math.min(1,player.targetTurnSpeed+0.1)
+					player.targetRoll=player.targetTurnSpeed*Math.PI/4;		
+				}
+				break;
+			case 0x28: // DOWN
+				if(isInputFlying) player.targetPitch=Math.max(-Math.PI/2,player.targetPitch-0.1)
+				break;		
+			case 0x2e: // DEL
+				if(isInputFlying) {
+					player.speed=0;
+					player.targetPitch=0;
+					player.targetRoll=0;
+					player.targetTurnSpeed=0;
+				}
+				break;	
+			case 0x31: // 1
+				cameraControl.cutTo({mode:CameraController.FIRST_PERSON,subject:player});
+				break;
+			case 0x32: // 2
+				cameraControl.cutTo({mode:CameraController.CHASE_CAM,target:player});
+				break;	
+			case 0x33: // 3
+				cameraControl.cutTo({mode:CameraController.GOD_CAM});
+				break;		
+
+		}
+	}
+
+	return {};
+
+}();
+</script> 
+</head>
+<body id="main"> 
+	<canvas id="glcanvas" width="100%" height="100%"></canvas>
+	<div id="msg">loading, please wait...</div>
+	<div id="instructions">
+		<div id="instructions-text">
+			<div id="instructions-band">
+			<h1>Retro Vector War</h1>
+			<h2>a webgl chrome experiment by <a href="http://seb.cc">Sebastien Chevrel</a></h2>
+			<h3>START PLAYING</h3>
+		</div>
+		</div>
+	</div>
+</body>
+</html>
+	
